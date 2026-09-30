@@ -1,0 +1,35 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go vet ./... && go test ./...
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/chat-extauth ./cmd/chat-extauth
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/chat-gateway ./cmd/chat-gateway
+          (cd dist && sha256sum chat-extauth > chat-extauth.sha256)
+      - name: Gateway image
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          TAG=${GITHUB_REF_NAME#v}
+          podman build --label org.opencontainers.image.source=https://github.com/nethesis/nethvoice-chat -t ghcr.io/nethesis/nethvoice-chat-gateway:$TAG -f cmd/chat-gateway/Containerfile dist
+          podman push ghcr.io/nethesis/nethvoice-chat-gateway:$TAG
+      - name: Release with the extauth binary
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/chat-extauth
+            dist/chat-extauth.sha256
